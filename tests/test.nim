@@ -1,4 +1,4 @@
-import pg, asyncdispatch, strutils
+import pg, asyncdispatch, strutils, threadpool, std/cpuinfo
 
 proc main1() =
   # sync version
@@ -8,13 +8,27 @@ proc main1() =
 
 proc main2() {.async.} =
   # run 20 queries at once on a 2 connecton pool
-  let pool = newAsyncPool("localhost", "", "", "test", 2)
+  let pool = newAsyncPool("", "", "", "host=localhost port=5432 dbname=test", 2)
   var futures = newSeq[Future[seq[Row]]]()
   for i in 0..<20:
-    futures.add pool.rows(sql"SELECT ?, pg_sleep(1);", @[$i])
+    futures.add pool.rows(sql"SELECT ?, pg_sleep(0.5);", @[$i])
   for f in futures:
     var res = await f
     echo res
+
+
+proc mutliThreadedTest() = 
+  let ncores = countProcessors()
+  let nconns = if ncores == 0: 2 else: ncores
+  let pool = newAsyncPool("", "", "", "host=localhost port=5432 dbname=test", nconns)
+
+  proc thread(pool: AsyncPool): seq[Row] = 
+    let res = waitFor pool.rows(sql"SELECT ?, pg_sleep(0.5);", @[$getThreadId()])
+    echo res
+
+  for _ in 0..<20:
+    discard spawn thread(pool) 
+  sync()
 
 
 proc errors() =
@@ -49,3 +63,4 @@ proc errors() =
 errors()
 main1()
 waitFor main2()
+mutliThreadedTest()
